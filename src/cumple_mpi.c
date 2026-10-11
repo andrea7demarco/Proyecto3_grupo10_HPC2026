@@ -1,24 +1,28 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <mpi.h>
 
-#define DIAS 365
+enum { DIAS = 365, PALABRAS_BITSET = (DIAS + 63) / 64 };
 
 // Devuelve 1 si hay al menos un cumpleaños repetido.
 int hay_coincidencia(int k) {
     if (k > DIAS) return 1;
+    if (k <= 1) return 0;
 
-    int dias[DIAS] = {0};
+    uint64_t dias[PALABRAS_BITSET] = {0};
 
     for (int i = 0; i < k; i++) {
-        int cumple = rand() % DIAS;
+        unsigned int cumple = (unsigned int)(rand() % DIAS);
+        uint64_t mascara = UINT64_C(1) << (cumple & 63U);
+        uint64_t *palabra = &dias[cumple >> 6U];
 
-        if (dias[cumple] == 1) {
+        if ((*palabra & mascara) != 0) {
             return 1;
         }
 
-        dias[cumple] = 1;
+        *palabra |= mascara;
     }
 
     return 0;
@@ -78,12 +82,17 @@ int main(int argc, char *argv[]) {
     MPI_Barrier(MPI_COMM_WORLD);
     double inicio = MPI_Wtime();
 
-    // 8. Ejecutar Monte Carlo localmente
-    for (unsigned long long i = 0;
-         i < simulaciones_locales; i++) {
+    // Para estos tamaños, el resultado se conoce sin simular.
+    if (k > DIAS) {
+        coincidencias_locales = simulaciones_locales;
+    } else if (k > 1) {
+        // 8. Ejecutar Monte Carlo localmente
+        for (unsigned long long i = 0;
+             i < simulaciones_locales; i++) {
 
-        if (hay_coincidencia(k)) {
-            coincidencias_locales++;
+            if (hay_coincidencia(k)) {
+                coincidencias_locales++;
+            }
         }
     }
 
