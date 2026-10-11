@@ -8,8 +8,8 @@
 *.so
 
 # Ejecutables del proyecto
-cumple_serial
-cumple_mpi
+*.ilk
+*.pdb
 
 # Archivos temporales
 *.tmp
