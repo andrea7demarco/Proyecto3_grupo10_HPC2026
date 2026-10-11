@@ -3,8 +3,10 @@
 import argparse
 import csv
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 import platform
+import shlex
 import statistics
 import subprocess
 
@@ -17,6 +19,58 @@ def lista_enteros(texto):
     if not valores or valores[0] < 1:
         raise argparse.ArgumentTypeError("Usar enteros positivos separados por comas")
     return valores
+
+
+def cpus_disponibles():
+    # En Debian respeta restricciones de afinidad de la sesion actual.
+    if hasattr(os, "sched_getaffinity"):
+        try:
+            return len(os.sched_getaffinity(0))
+        except OSError:
+            pass
+    return os.cpu_count() or 1
+
+
+def procesos_predeterminados(cores, machine):
+    if machine == "cluster":
+        return sorted({1, cores} | {p for p in RECURSOS if p <= cores})
+    procesos = []
+    p = 1
+    while p <= cores:
+        procesos.append(p)
+        p *= 2
+    if procesos[-1] != cores:
+        procesos.append(cores)
+    return procesos
+
+
+def describir_recursos(cores, machine):
+    descripcion = (f"Entorno de pruebas: {machine}\n"
+                   f"Limite de procesos MPI declarado: {cores}\n")
+    if machine == "cluster":
+        ram = RECURSOS.get(cores)
+        return descripcion + (f"RAM declarada segun tabla del cluster: {ram} GB\n"
+                              if ram is not None else "RAM del recurso: no declarada\n")
+
+    descripcion += f"Procesadores logicos disponibles: {cpus_disponibles()}\n"
+    cpu = platform.processor() or "no detectada"
+    try:
+        for linea in Path("/proc/cpuinfo").read_text(encoding="utf-8").splitlines():
+            clave, separador, valor = linea.partition(":")
+            if separador and clave.strip() == "model name":
+                cpu = valor.strip()
+                break
+    except OSError:
+        pass
+    descripcion += f"CPU: {cpu}\n"
+    try:
+        paginas = os.sysconf("SC_PHYS_PAGES")
+        tamano_pagina = os.sysconf("SC_PAGE_SIZE")
+        if paginas > 0 and tamano_pagina > 0:
+            return descripcion + f"RAM total visible al sistema: {paginas * tamano_pagina / 1024**3:.2f} GiB\n"
+    except (AttributeError, OSError, ValueError):
+        pass
+    return descripcion + "RAM total visible al sistema: no detectada\n"
 
 
 def probabilidad_teorica(k):
@@ -65,9 +119,12 @@ def resumir(tiempos, k, n):
 
 
 def main(argv=None):
-    # 1. Elegir las pruebas. --cores debe coincidir con el panel del cluster.
+    # 1. Elegir las pruebas y el presupuesto de procesos de la PC o del cluster.
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cores", type=int, required=True, choices=RECURSOS)
+    parser.add_argument("--machine", choices=["cluster", "pc"], default="cluster",
+                        help="pc usa una escala de procesos local; cluster conserva la escala del panel")
+    parser.add_argument("--cores", type=int, required=True,
+                        help="Limite positivo de procesos MPI, incluidos 8 o 16 para una PC")
     parser.add_argument("--profile", choices=["performance", "validation"], default="performance")
     parser.add_argument("--k", type=lista_enteros)
     parser.add_argument("--n", type=lista_enteros)
@@ -75,12 +132,22 @@ def main(argv=None):
     parser.add_argument("--repetitions", type=int, default=7)
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--launcher", default="mpirun")
+    parser.add_argument("--launcher-args", default="",
+                        help="Opciones adicionales del lanzador, por ejemplo afinidad de Open MPI")
     parser.add_argument("--mpi-mode", choices=["static", "dynamic", "both"], default="static",
                         help="Version MPI a medir; both compara estatica y dinamica")
     parser.add_argument("--batch-size", type=int,
                         help="Simulaciones por lote dinamico; por defecto se calcula automaticamente")
     args = parser.parse_args(argv)
-    procesos = args.processes or [p for p in RECURSOS if p <= args.cores]
+    if not 1 <= args.cores <= 2147483647:
+        parser.error("--cores debe estar entre 1 y 2147483647")
+    if args.machine == "pc" and args.cores > cpus_disponibles():
+        parser.error("--cores supera los procesadores logicos disponibles en esta PC")
+    try:
+        opciones_lanzador = shlex.split(args.launcher_args)
+    except ValueError as error:
+        parser.error("Opciones del lanzador invalidas: " + str(error))
+    procesos = args.processes or procesos_predeterminados(args.cores, args.machine)
     if 1 not in procesos or max(procesos) > args.cores:
         parser.error("Incluir MPI1 y no superar los cores asignados")
     if args.repetitions < 1 or not 0 <= args.seed <= 4294967295 - args.repetitions * args.cores + 1:
@@ -116,8 +183,8 @@ def main(argv=None):
                  for version, fuente in fuentes_mpi.items()}
     print("Resultados:", carpeta, flush=True)
     (carpeta / "info.txt").write_text(
-        f"Equipo: {platform.node()}\nSistema: {platform.platform()}\n"
-        f"Recurso declarado: {RECURSOS[args.cores]} GB / {args.cores} cores\n"
+        f"Equipo: {platform.node()}\nSistema: {platform.platform()}\n" +
+        describir_recursos(args.cores, args.machine) +
         f"Parametros: {vars(args)}\nCompilacion: -O3 -std=c11 -Wall -Wextra -Wpedantic\n",
         encoding="utf-8")
     compilaciones = [("gcc", "cumple_secuencial.c", secuencial)]
@@ -152,7 +219,7 @@ def main(argv=None):
                             comando = [str(secuencial)]
                             etiqueta = "Tiempo secuencial"
                         else:
-                            comando = [args.launcher, "-np", str(p), str(paralelos[version])]
+                            comando = [args.launcher, *opciones_lanzador, "-np", str(p), str(paralelos[version])]
                             etiqueta = "Tiempo paralelo"
                         comando += [str(k), str(n), str(semilla)]
                         if version == "mpi_dynamic" and args.batch_size is not None:

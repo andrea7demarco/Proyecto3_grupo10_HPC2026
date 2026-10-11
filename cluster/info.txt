@@ -1,0 +1,5 @@
+Equipo: jupyter-guillermomiguelte--cc-proyecto---8ef365c5
+Sistema: Linux-5.14.0-687.52.1.el9_8.x86_64-x86_64-with-glibc2.39
+Recurso declarado: 384 GB / 96 cores
+Parametros: {'cores': 96, 'profile': 'performance', 'k': None, 'n': None, 'processes': None, 'repetitions': 7, 'seed': 2026, 'launcher': 'mpirun'}
+Compilacion: -O3 -std=c11 -Wall -Wextra -Wpedantic
