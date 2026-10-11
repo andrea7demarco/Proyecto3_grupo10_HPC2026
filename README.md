@@ -1,4 +1,46 @@
 PROYECTO HPC 
+
+## Ejecucion y benchmarks
+
+El script de Python compila las dos versiones y registra corridas, medianas,
+speedup respecto del secuencial y de MPI1, y error frente a la teoria.
+Se ejecuta desde la terminal del recurso seleccionado en el panel del cluster.
+
+```bash
+# Prueba corta en una asignacion de 24 cores
+python3 scripts/benchmark_cluster.py --cores 24 --k 23 --n 100000 --repetitions 3
+
+# Campana de rendimiento, siete repeticiones por configuracion
+python3 scripts/benchmark_cluster.py --cores 24
+
+# Validacion variando K, N y semillas
+python3 scripts/benchmark_cluster.py --cores 24 --profile validation
+```
+
+Reemplazar `24` por los cores realmente asignados: 1, 2, 6, 12, 24, 48 o 96.
+Se requieren Python 3, gcc, mpicc y mpirun. No se solicitan recursos desde
+el script. Para consultar todas las opciones disponibles, ejecutar
+`python3 scripts/benchmark_cluster.py --help`.
+
+Compilacion manual e interfaces:
+
+```bash
+gcc -O3 -std=c11 -Wall -Wextra -Wpedantic src/cumple_secuencial.c -o cumple_secuencial
+mpicc -O3 -std=c11 -Wall -Wextra -Wpedantic src/cumple_mpi.c -o cumple_mpi
+./cumple_secuencial 23 1000000 2026
+mpirun -np 6 ./cumple_mpi 23 1000000 2026
+```
+
+Ambas versiones aceptan `K N [semilla]`; la semilla base predeterminada es 2026.
+Ambas versiones comparten la funcion `hay_coincidencia` definida en
+`src/cumple_functions.h` y mantienen su propio bucle de simulaciones.
+El secuencial recibe argumentos como MPI
+y mide el tiempo de pared del calculo con `clock_gettime(CLOCK_MONOTONIC)`.
+Los dias se representan internamente de 0 a 364 con un bitset de 48 bytes.
+
+El texto de desarrollo que sigue todavia requiere completar las formulas,
+los resultados finales, las conclusiones y la bibliografia antes de rendir.
+
 ___________________________________________________________________________ Proyecto 3: Simulación de Probabilidad Colectiva (Paradoja del Cumpleaños) Las paradojas probabilísticas suelen ser contraintuitivas. Sin embargo, mediante simulación masiva de eventos (método empírico), es posible verificar la frecuencia relativa de los resultados y validarlos contra la teoría. Investigar la siguiente “paradoja” y contrastar la teoría con simulaciones realizadas: Paradoja del Cumpleaños: Determinación de la probabilidad de que al menos dos personas compartan la misma fecha de cumpleaños en un grupo de tamaño 𝐾 
 
 Consignas: 
@@ -113,7 +155,7 @@ Para resolver computacionalmente la paradoja del cumpleaños se propone implemen
 
 2.1 Implementación secuencial
 
-Inicialmente se desarrolla una implementación secuencial que ejecuta N simulaciones de Monte Carlo utilizando un único proceso. Cada simulación consiste en generar K fechas de cumpleaños aleatorias. Para detectar coincidencias se utiliza un arreglo de 365 posiciones, inicializado en 0 el cual permite registrar las fechas generadas. 
+Inicialmente se desarrolla una implementación secuencial que ejecuta N simulaciones de Monte Carlo utilizando un único proceso. Cada simulación consiste en generar hasta K fechas de cumpleaños aleatorias. Para detectar coincidencias se utiliza un bitset de seis enteros de 64 bits, inicializado en cero, que permite marcar los 365 días posibles.
 
 Cada vez que se genera un cumpleaños, se verifica si la posición correspondiente ya fue utilizada. Si esto ocurre, se identifica una coincidencia y se finaliza la simulación dado que solamente nos interesa determinar si al menos dos personas comparten cumpleaños. 
 

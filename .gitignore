@@ -32,3 +32,10 @@ Thumbs.db
 __pycache__/
 *.pyc
 .venv/
+
+# Ejecutables y archivos temporales de las pruebas locales
+.benchmark-test-*/
+
+# Los CSV, metadatos y logs de resultados se pueden subir al repositorio.
+results/**/bin/
+!results/**/*.log
