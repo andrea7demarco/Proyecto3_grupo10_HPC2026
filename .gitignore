@@ -39,3 +39,6 @@ __pycache__/
 # Los CSV, metadatos y logs de resultados se pueden subir al repositorio.
 results/**/bin/
 !results/**/*.log
+
+
+results/
