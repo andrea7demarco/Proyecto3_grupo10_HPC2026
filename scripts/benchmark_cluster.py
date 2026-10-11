@@ -57,8 +57,8 @@ def resumir(tiempos, k, n):
         if 1 < k <= 365 and mediana > 0:
             speedup = medianas[("sequential", 1)] / mediana
             eficiencia = speedup / p
-            if version == "mpi":
-                speedup_mpi1 = medianas[("mpi", 1)] / mediana
+            if version in ("mpi", "mpi_dynamic"):
+                speedup_mpi1 = medianas[(version, 1)] / mediana
         filas.append([version, k, n, p, len(tiempos[(version, p)]), mediana,
                       speedup, eficiencia, speedup_mpi1])
     return filas
@@ -75,12 +75,21 @@ def main(argv=None):
     parser.add_argument("--repetitions", type=int, default=7)
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--launcher", default="mpirun")
+    parser.add_argument("--mpi-mode", choices=["static", "dynamic", "both"], default="static",
+                        help="Version MPI a medir; both compara estatica y dinamica")
+    parser.add_argument("--batch-size", type=int,
+                        help="Simulaciones por lote dinamico; por defecto se calcula automaticamente")
     args = parser.parse_args(argv)
     procesos = args.processes or [p for p in RECURSOS if p <= args.cores]
     if 1 not in procesos or max(procesos) > args.cores:
         parser.error("Incluir MPI1 y no superar los cores asignados")
     if args.repetitions < 1 or not 0 <= args.seed <= 4294967295 - args.repetitions * args.cores + 1:
         parser.error("Repeticiones o semilla fuera de rango")
+    if args.batch_size is not None:
+        if not 1 <= args.batch_size <= 18446744073709551615:
+            parser.error("El lote debe ser positivo y entrar en unsigned long long")
+        if args.mpi_mode == "static":
+            parser.error("--batch-size requiere --mpi-mode dynamic o both")
     if args.profile == "performance":
         valores_k = args.k or [23]
         valores_n = args.n or [100000000, 1000000000]
@@ -91,22 +100,30 @@ def main(argv=None):
     if max(valores_k) > 2147483647 or max(valores_n) > 18446744073709551615:
         parser.error("K o N fuera del rango de los programas C")
 
-    # 2. Crear una carpeta nueva y compilar las dos versiones con -O3.
+    # 2. Crear una carpeta nueva y compilar las versiones elegidas con -O3.
     fecha = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
     carpeta = ROOT / "results" / f"cores{args.cores}_{args.profile}_{fecha}"
     carpeta.mkdir(parents=True)
     (carpeta / "logs").mkdir()
     (carpeta / "bin").mkdir()
     secuencial = carpeta / "bin/cumple_secuencial"
-    paralelo = carpeta / "bin/cumple_mpi"
+    fuentes_mpi = {}
+    if args.mpi_mode in ("static", "both"):
+        fuentes_mpi["mpi"] = "cumple_mpi.c"
+    if args.mpi_mode in ("dynamic", "both"):
+        fuentes_mpi["mpi_dynamic"] = "cumple_mpi_dinamico.c"
+    paralelos = {version: carpeta / "bin" / Path(fuente).stem
+                 for version, fuente in fuentes_mpi.items()}
     print("Resultados:", carpeta, flush=True)
     (carpeta / "info.txt").write_text(
         f"Equipo: {platform.node()}\nSistema: {platform.platform()}\n"
         f"Recurso declarado: {RECURSOS[args.cores]} GB / {args.cores} cores\n"
         f"Parametros: {vars(args)}\nCompilacion: -O3 -std=c11 -Wall -Wextra -Wpedantic\n",
         encoding="utf-8")
-    for compilador, fuente, ejecutable in [("gcc", "cumple_secuencial.c", secuencial),
-                                           ("mpicc", "cumple_mpi.c", paralelo)]:
+    compilaciones = [("gcc", "cumple_secuencial.c", secuencial)]
+    compilaciones += [("mpicc", fuente, paralelos[version])
+                      for version, fuente in fuentes_mpi.items()]
+    for compilador, fuente, ejecutable in compilaciones:
         subprocess.run([compilador, "-O3", "-std=c11", "-Wall", "-Wextra", "-Wpedantic",
                         str(ROOT / "src" / fuente), "-o", str(ejecutable)], check=True)
 
@@ -118,7 +135,8 @@ def main(argv=None):
                             "coincidences", "probability", "theory", "absolute_error", "kernel_seconds"])
         resumen.writerow(["implementation", "k", "n", "processes", "repetitions", "median_seconds",
                            "speedup_sequential", "efficiency_sequential", "speedup_mpi1"])
-        configuraciones = [("sequential", 1)] + [("mpi", p) for p in procesos]
+        configuraciones = [("sequential", 1)] + [(version, p)
+                           for version in fuentes_mpi for p in procesos]
         for k in valores_k:
             for n in valores_n:
                 tiempos = {configuracion: [] for configuracion in configuraciones}
@@ -134,9 +152,11 @@ def main(argv=None):
                             comando = [str(secuencial)]
                             etiqueta = "Tiempo secuencial"
                         else:
-                            comando = [args.launcher, "-np", str(p), str(paralelo)]
+                            comando = [args.launcher, "-np", str(p), str(paralelos[version])]
                             etiqueta = "Tiempo paralelo"
                         comando += [str(k), str(n), str(semilla)]
+                        if version == "mpi_dynamic" and args.batch_size is not None:
+                            comando.append(str(args.batch_size))
                         log = carpeta / "logs" / f"k{k}_n{n}_{version}_p{p}_r{repeticion}.log"
                         print(f"K={k} N={n} {version} p={p} repeticion={repeticion}", flush=True)
                         conteo, tiempo = ejecutar(comando, log, etiqueta)

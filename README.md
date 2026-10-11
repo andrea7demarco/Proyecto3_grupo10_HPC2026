@@ -2,7 +2,7 @@ PROYECTO HPC
 
 ## Ejecucion y benchmarks
 
-El script de Python compila las dos versiones y registra corridas, medianas,
+El script de Python compila las versiones seleccionadas y registra corridas, medianas,
 speedup respecto del secuencial y de MPI1, y error frente a la teoria.
 Se ejecuta desde la terminal del recurso seleccionado en el panel del cluster.
 
@@ -15,6 +15,12 @@ python3 scripts/benchmark_cluster.py --cores 24
 
 # Validacion variando K, N y semillas
 python3 scripts/benchmark_cluster.py --cores 24 --profile validation
+
+# Comparar reparto estatico y maestro-trabajador dinamico
+python3 scripts/benchmark_cluster.py --cores 24 --mpi-mode both --k 23 --n 1000000 --repetitions 3
+
+# Elegir un lote fijo para la version dinamica
+python3 scripts/benchmark_cluster.py --cores 24 --mpi-mode dynamic --batch-size 10000
 ```
 
 Reemplazar `24` por los cores realmente asignados: 1, 2, 6, 12, 24, 48 o 96.
@@ -27,16 +33,25 @@ Compilacion manual e interfaces:
 ```bash
 gcc -O3 -std=c11 -Wall -Wextra -Wpedantic src/cumple_secuencial.c -o cumple_secuencial
 mpicc -O3 -std=c11 -Wall -Wextra -Wpedantic src/cumple_mpi.c -o cumple_mpi
+mpicc -O3 -std=c11 -Wall -Wextra -Wpedantic src/cumple_mpi_dinamico.c -o cumple_mpi_dinamico
 ./cumple_secuencial 23 1000000 2026
 mpirun -np 6 ./cumple_mpi 23 1000000 2026
+mpirun -np 6 ./cumple_mpi_dinamico 23 1000000 2026 10000
 ```
 
-Ambas versiones aceptan `K N [semilla]`; la semilla base predeterminada es 2026.
-Ambas versiones comparten la funcion `hay_coincidencia` definida en
+Las versiones secuencial y MPI estatica aceptan `K N [semilla]`; la semilla base predeterminada es 2026.
+Las tres versiones comparten la funcion `hay_coincidencia` definida en
 `src/cumple_functions.h` y mantienen su propio bucle de simulaciones.
 El secuencial recibe argumentos como MPI
 y mide el tiempo de pared del calculo con `clock_gettime(CLOCK_MONOTONIC)`.
 Los dias se representan internamente de 0 a 364 con un bitset de 48 bytes.
+
+La version dinamica acepta `K N [semilla [lote]]`. Con dos o mas procesos,
+el rank 0 coordina y los otros `p-1` ejecutan lotes; al recibir un resultado,
+el maestro asigna otro lote al mismo trabajador mientras queden simulaciones.
+Con un proceso se ejecutan las N simulaciones localmente, usando la misma
+semilla que el secuencial. El reparto estatico sigue disponible y es el modo
+predeterminado del script.
 
 El texto de desarrollo que sigue todavia requiere completar las formulas,
 los resultados finales, las conclusiones y la bibliografia antes de rendir.
@@ -167,11 +182,11 @@ Esta implementación servirá para validar el funcionamiento del algoritmo y est
 
 2.2 Estrategia de paralelización 
 
-Utilizaremos el modelo SPMD (Single Program, Multiple Data) con distribución estática del trabajo, ya que las simulaciones de Monte Carlo son independientes entre sí, por lo que pueden ejecutarse simultáneamente sin intercambiar información durante el cálculo.
+La versión `cumple_mpi.c` utiliza el modelo SPMD (Single Program, Multiple Data) con distribución estática del trabajo, ya que cada simulación de Monte Carlo puede ejecutarse sin consultar a las demás.
 
 La distribución estática consiste en asignar previamente una cantidad de simulaciones a cada proceso, buscando equilibrar la carga del trabajo.
 
-A diferencia del modelo maestro-trabajador dinámico, no es necesario que un proceso central distribuya nuevas tareas durante la ejecución. Todos los procesos participan en el cálculo y únicamente se comunican para combinar los resultados finales.
+A diferencia del reparto maestro-trabajador dinámico de `cumple_mpi_dinamico.c`, esta versión no necesita que un proceso central distribuya nuevas tareas durante la ejecución. Todos los procesos participan en el cálculo, se sincronizan antes de medir y combinan los resultados finales mediante reducciones.
 
 Esta estrategia busca reducir los costos de comunicación y sincronización, favoreciendo el rendimiento de la implementación paralela.
 
