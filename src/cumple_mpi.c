@@ -1,32 +1,11 @@
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <mpi.h>
+#include <errno.h>
+#include <limits.h>
 
-enum { DIAS = 365, PALABRAS_BITSET = (DIAS + 63) / 64 };
-
-// Devuelve 1 si hay al menos un cumpleaños repetido.
-int hay_coincidencia(int k) {
-    if (k > DIAS) return 1;
-    if (k <= 1) return 0;
-
-    uint64_t dias[PALABRAS_BITSET] = {0};
-
-    for (int i = 0; i < k; i++) {
-        unsigned int cumple = (unsigned int)(rand() % DIAS);
-        uint64_t mascara = UINT64_C(1) << (cumple & 63U);
-        uint64_t *palabra = &dias[cumple >> 6U];
-
-        if ((*palabra & mascara) != 0) {
-            return 1;
-        }
-
-        *palabra |= mascara;
-    }
-
-    return 0;
-}
+#include "cumple_functions.h"
 
 int main(int argc, char *argv[]) {
 
@@ -43,24 +22,26 @@ int main(int argc, char *argv[]) {
     MPI_Comm_size(MPI_COMM_WORLD, &num_procesos);
 
     // 4. Leer argumentos
-    if (argc != 3) {
+    if (argc != 3 && argc != 4) {
         if (rank == 0) {
-            printf("Uso: ./cumple_mpi K N\n");
+            printf("Uso: ./cumple_mpi K N [semilla]\n");
         }
         MPI_Finalize();
         return 1;
     }
 
-    int k = atoi(argv[1]);
-    unsigned long long n = strtoull(argv[2], NULL, 10);
-
-    if (k < 1 || n == 0 || argv[2][0] == '-') {
+    unsigned long long k_leido, n, semilla = 2026;
+    if (!leer_numero(argv[1], &k_leido) || k_leido < 1 || k_leido > INT_MAX ||
+        !leer_numero(argv[2], &n) || n == 0 ||
+        (argc == 4 && !leer_numero(argv[3], &semilla)) || semilla > UINT_MAX) {
         if (rank == 0) {
-            printf("Valores de K o N invalidos\n");
+            printf("Valores de K, N o semilla invalidos\n");
         }
         MPI_Finalize();
         return 1;
     }
+
+    int k = (int)k_leido;
 
     // 5. Repartir las simulaciones
     unsigned long long base = n / num_procesos;
@@ -73,7 +54,7 @@ int main(int argc, char *argv[]) {
     }
 
     // 6. Cada proceso utiliza una semilla diferente
-    srand(2026u + (unsigned int)rank);
+    srand((unsigned int)semilla + (unsigned int)rank);
 
     unsigned long long coincidencias_locales = 0;
     unsigned long long coincidencias_totales = 0;
@@ -128,12 +109,13 @@ int main(int argc, char *argv[]) {
 
         printf("\nPersonas por grupo: %d\n", k);
         printf("Procesos MPI: %d\n", num_procesos);
+        printf("Semilla base: %llu\n", semilla);
         printf("Simulaciones totales: %llu\n", n);
         printf("Coincidencias: %llu\n",
                coincidencias_totales);
-        printf("Probabilidad estimada: %.4f%%\n",
+        printf("Probabilidad estimada: %.8f%%\n",
                probabilidad * 100);
-        printf("Tiempo paralelo: %.6f segundos\n",
+        printf("Tiempo paralelo: %.9f segundos\n",
                tiempo_total);
     }
 
